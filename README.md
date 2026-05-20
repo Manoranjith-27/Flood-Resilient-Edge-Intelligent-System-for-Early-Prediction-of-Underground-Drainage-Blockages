@@ -1,0 +1,2 @@
+# Flood-Resilient-Edge-Intelligent-System-for-Early-Prediction-of-Underground-Drainage-Blockages
+AI and IoT-based smart drainage monitoring system that predicts underground blockages before flooding occurs. Uses edge computing, real-time sensors, and machine learning to monitor water flow, detect anomalies, and send instant alerts for preventive maintenance, improving urban flood resilience and smart city infrastructure.
