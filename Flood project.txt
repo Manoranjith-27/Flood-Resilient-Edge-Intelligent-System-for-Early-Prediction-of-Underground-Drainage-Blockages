@@ -1,0 +1,239 @@
+/*---------------- BLYNK CONFIG ----------------*/
+#define BLYNK_TEMPLATE_ID "TMPL3DEvwqn4M"
+#define BLYNK_TEMPLATE_NAME "MANHOLE MONITORING"
+#define BLYNK_AUTH_TOKEN "jd2hFiU7CWd1-MidEnfugAVb9hWm3axJ"
+
+/*---------------- LIBRARIES ----------------*/
+#define BLYNK_PRINT Serial
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+/*---------------- WIFI DETAILS ----------------*/
+char ssid[] = "iot manhole";
+char pass[] = "123123123";
+
+/*---------------- LCD ----------------*/
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+/*---------------- PIN DEFINITIONS ----------------*/
+#define GAS_SENSOR_PIN   34
+#define FLOAT_SENSOR_PIN 27
+#define BUZZER_PIN       14
+
+#define GSM_RX           16
+#define GSM_TX           17
+
+/*---------------- SETTINGS ----------------*/
+#define GAS_THRESHOLD 1000   // Adjust based on real methane readings
+
+/*---------------- VARIABLES ----------------*/
+int gasValue = 0;
+
+bool gasAlertSent = false;
+bool waterAlertSent = false;
+
+/*---------------- USER PHONE NUMBER ----------------*/
+String phoneNumber = "+919942563246";   // Replace with your mobile number
+
+/*---------------- TIMER ----------------*/
+BlynkTimer timer;
+
+/************************************************************
+   GSM SMS FUNCTION
+************************************************************/
+void sendSMS(String message) {
+
+  Serial.println("Sending SMS...");
+
+  Serial2.println("AT");
+  delay(300);
+
+  Serial2.println("AT+CMGF=1");
+  delay(300);
+
+  Serial2.print("AT+CMGS=\"");
+  Serial2.print(phoneNumber);
+  Serial2.println("\"");
+  delay(300);
+
+  Serial2.print(message);
+  delay(300);
+
+  Serial2.write(26);   // CTRL+Z
+  delay(3000);
+
+  Serial.println("SMS SENT: " + message);
+}
+
+/************************************************************
+   LCD UPDATE FUNCTION
+************************************************************/
+void updateLCD(String gasStatus, String waterStatus) {
+
+  /*---------------- FIRST LINE ----------------*/
+  lcd.setCursor(0, 0);
+  lcd.print("CH4:");
+
+  // Clear old gas value area
+  lcd.setCursor(4, 0);
+  lcd.print("    ");
+  lcd.setCursor(4, 0);
+  lcd.print(gasValue);
+
+  // Gas status
+  lcd.setCursor(9, 0);
+  if (gasStatus == "HIGH") {
+    lcd.print("HIGH   ");
+  } else {
+    lcd.print("NORMAL ");
+  }
+
+  /*---------------- SECOND LINE ----------------*/
+  lcd.setCursor(0, 1);
+  lcd.print("WL:");
+
+  lcd.setCursor(3, 1);
+  if (waterStatus == "HIGH") {
+    lcd.print("HIGH   ");
+  } else {
+    lcd.print("NORMAL ");
+  }
+}
+
+/************************************************************
+   MAIN SENSOR FUNCTION
+************************************************************/
+void checkSensors() {
+
+  /*---------------- READ SENSOR VALUES ----------------*/
+  gasValue = analogRead(GAS_SENSOR_PIN);
+  bool waterHigh = digitalRead(FLOAT_SENSOR_PIN);
+
+  String gasStatus = "NORMAL";
+  String waterStatus = "NORMAL";
+
+  bool buzzerState = LOW;
+
+  /********************************************************
+     GAS DETECTION
+  ********************************************************/
+  if (gasValue > GAS_THRESHOLD) {
+    gasStatus = "HIGH";
+    buzzerState = HIGH;
+  }
+
+  /********************************************************
+     WATER DETECTION
+  ********************************************************/
+  if (waterHigh == HIGH) {
+    waterStatus = "HIGH";
+    buzzerState = HIGH;
+  }
+
+  /********************************************************
+     BUZZER CONTROL
+  ********************************************************/
+  digitalWrite(BUZZER_PIN, buzzerState);
+
+  /********************************************************
+     LCD UPDATE FIRST (NO DELAY)
+  ********************************************************/
+  updateLCD(gasStatus, waterStatus);
+
+  /********************************************************
+     BLYNK UPDATE
+  ********************************************************/
+  Blynk.virtualWrite(V0, gasValue);      // CH4 Value
+  Blynk.virtualWrite(V1, gasStatus);     // CH4 Status
+  Blynk.virtualWrite(V2, waterStatus);   // Water Status
+
+  /********************************************************
+     SERIAL MONITOR
+  ********************************************************/
+  Serial.println("========== LIVE MANHOLE STATUS ==========");
+  Serial.print("CH4 Value: ");
+  Serial.println(gasValue);
+
+  Serial.print("CH4 Status: ");
+  Serial.println(gasStatus);
+
+  Serial.print("Water Level: ");
+  Serial.println(waterStatus);
+
+  Serial.println("=========================================");
+
+  /********************************************************
+     ONE-TIME GAS SMS
+  ********************************************************/
+  if (gasStatus == "HIGH" && !gasAlertSent) {
+    sendSMS("ALERT! Methane Gas HIGH in Manhole!");
+    gasAlertSent = true;
+  }
+
+  // Reset after normal
+  if (gasStatus == "NORMAL") {
+    gasAlertSent = false;
+  }
+
+  /********************************************************
+     ONE-TIME WATER SMS
+  ********************************************************/
+  if (waterStatus == "HIGH" && !waterAlertSent) {
+    sendSMS("ALERT! Water Blockage Detected in Manhole!");
+    waterAlertSent = true;
+  }
+
+  // Reset after normal
+  if (waterStatus == "NORMAL") {
+    waterAlertSent = false;
+  }
+}
+
+/************************************************************
+   SETUP
+************************************************************/
+void setup() {
+
+  /*---------------- SERIAL ----------------*/
+  Serial.begin(115200);
+
+  /*---------------- GSM SERIAL ----------------*/
+  Serial2.begin(9600, SERIAL_8N1, GSM_RX, GSM_TX);
+
+  /*---------------- PIN MODES ----------------*/
+  pinMode(GAS_SENSOR_PIN, INPUT);
+  pinMode(FLOAT_SENSOR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  digitalWrite(BUZZER_PIN, LOW);
+
+  /*---------------- LCD START ----------------*/
+  lcd.begin();
+  lcd.backlight();
+
+  lcd.setCursor(0, 0);
+  lcd.print("MANHOLE SYSTEM");
+  lcd.setCursor(0, 1);
+  lcd.print("Initializing...");
+  delay(2000);
+
+  lcd.clear();
+
+  /*---------------- WIFI + BLYNK ----------------*/
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  /*---------------- TIMER ----------------*/
+  timer.setInterval(500L, checkSensors);
+  // Every 0.5 second live update
+}
+
+/************************************************************
+   LOOP
+************************************************************/
+void loop() {
+
+  Blynk.run();
+  timer.run();
+}
